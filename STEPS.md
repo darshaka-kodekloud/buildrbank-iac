@@ -19,9 +19,21 @@ month**. There is a checklist at the end.
 
 ## Part A · On your laptop
 
-### 1 · Fork it
+### 1 · Fork it, and turn Actions on
 
 Actions only runs in a repo you own. **Fork**, top right of the repo page.
+
+Then — and this one is easy to miss — open the **Actions** tab of *your fork*.
+GitHub disables workflows on a new fork and shows a yellow banner:
+
+> *Workflows aren't being run on this forked repository.*
+
+Click **I understand my workflows, go ahead and enable them**. Until you do,
+pushing does nothing at all: no run appears, no error appears, and you will
+spend twenty minutes looking for a pipeline that was never allowed to start.
+
+✓ The Actions tab shows **Test, build, deploy** in the left sidebar, with no
+yellow banner.
 
 ### 2 · Clone your fork
 
@@ -59,6 +71,26 @@ cp "/Users/you/My Documents/my old project/.env" .env
 
 ✓ `cat .env` shows your OpenRouter, Supabase and Langfuse keys.
 
+**Now go and wake your Supabase project.** Open
+[supabase.com/dashboard](https://supabase.com/dashboard) and look at the project
+your `SUPABASE_URL` points at.
+
+Free projects **pause after a week of no use**, and a paused project has to be
+resumed by hand — there is a **Restore** or **Resume** button on its page. Click
+it and wait for the dashboard to say the project is active. If the project is
+gone entirely, make a new one, run `scripts/schema.sql` in the SQL editor, then
+`python scripts/seed.py`, and put the new URL and key in `.env`.
+
+> **Why this matters more than it looks.** A dead Supabase does not stop the app
+> from starting, and it does not stop `/health` from saying `ok`. Everything
+> will look perfect — green pipeline, page loads — right up until you type your
+> first message and get
+> `ConnectError: [Errno -2] Name or service not known`. That error is DNS
+> failing on a hostname that no longer exists, and nothing about it mentions
+> Supabase.
+
+✓ The Supabase dashboard shows your project as **active**, not paused.
+
 ### 4 · Prove it still works before you change anything
 
 ```bash
@@ -72,9 +104,18 @@ Windows: `.venv\Scripts\activate`, and use `python`, not `python3`.
 
 ✓ Six green ticks.
 
-### 5 · Install the two new tools
+### 5 · Install the tools
 
-You need **Terraform** and **Ansible**. Find your row and do only that one.
+You need **Terraform**, **Ansible** and the **AWS CLI**. All three are new this
+week — in Week 06 you only ever used the AWS *console*, in a browser, so you do
+not have the CLI either.
+
+There is also a fourth, **the GitHub CLI (`gh`)**, which is **optional**. Every
+step in this sheet can be done in the browser instead, and where that is true
+it says so. It is worth installing anyway for one line in step 12 — it removes
+the single most error-prone moment of Week 06.
+
+Find your row and do only that one.
 
 **macOS**
 
@@ -82,6 +123,8 @@ You need **Terraform** and **Ansible**. Find your row and do only that one.
 brew tap hashicorp/tap
 brew install hashicorp/tap/terraform
 brew install ansible
+brew install awscli
+brew install gh        # optional
 ```
 
 **Ubuntu, or Windows with WSL**
@@ -102,17 +145,66 @@ echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://
 sudo apt update && sudo apt install -y terraform
 ```
 
+And the AWS CLI, which is not in apt — you download it from AWS:
+
+```bash
+sudo apt install -y unzip
+curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip
+unzip -q awscliv2.zip
+sudo ./aws/install
+```
+
+Optionally the GitHub CLI, which has its own list like Terraform's:
+
+```bash
+sudo mkdir -p -m 755 /etc/apt/keyrings
+curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg | sudo tee /etc/apt/keyrings/githubcli-archive-keyring.gpg > /dev/null
+sudo chmod go+r /etc/apt/keyrings/githubcli-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" | sudo tee /etc/apt/sources.list.d/github-cli.list > /dev/null
+sudo apt update && sudo apt install -y gh
+```
+
 > **There is no Windows version of Ansible.** It has to run from Linux. WSL
 > is that Linux. If WSL fought you in Week 01, use **AWS CloudShell** instead
 > — the `>_` icon in the AWS console, then `sudo dnf install -y ansible` and
-> the HashiCorp repo for Terraform.
+> the HashiCorp repo for Terraform. CloudShell already has the AWS CLI, and it
+> is already signed in as you, so you can skip steps 6 and 7 entirely.
 
-✓ Both of these print a version number:
+> **Git Bash is not a substitute for WSL.** Terraform, the AWS CLI, `git` and
+> `gh` all work there, so you can do most of this week in it — but Ansible
+> cannot. It needs Python modules that only exist on Linux, so `pip install
+> ansible` appears to succeed and then `ansible --version` fails with
+> `ModuleNotFoundError: No module named 'pwd'`. For step 10, use WSL or
+> CloudShell.
+
+✓ All three of these print a version number:
 
 ```bash
 terraform -version
 ansible --version
+aws --version
 ```
+
+**If you installed `gh`**, sign it in once:
+
+```bash
+gh auth login
+```
+
+Choose GitHub.com, HTTPS, and let it authenticate Git operations too.
+
+> **It has to be the account that owns your fork.** If you have a work GitHub
+> and a personal one, this is the single easiest thing to get wrong. `gh` is
+> also what Git uses to push over HTTPS, so the wrong account here breaks both
+> `gh secret set` *and* `git push`, with two different-looking errors:
+> `HTTP 403: You must have repository read permissions` and
+> `remote: Permission to ... denied`.
+>
+> ```bash
+> gh auth status
+> ```
+>
+> ✓ It names the same account that owns your fork.
 
 ---
 
@@ -228,16 +320,17 @@ a form to put it there.
 > `main.tf`. There is no AMI id to look up: `data "aws_ami"` asks AWS at run
 > time for the newest Ubuntu 24.04 in whatever region you chose.
 
-### 9 · Write the address down — in a file, this time
+### 9 · Look at what Terraform already wrote
+
+You do not have to type the address anywhere. Terraform knew it the moment the
+server existed, so it wrote Ansible's inventory for you:
 
 ```bash
-terraform output -raw ip
+cat inventory.ini
 ```
 
-Open `inventory.ini` and replace `PASTE_THE_IP_HERE` with that number.
-Change nothing else.
-
 ```ini
+# Written by Terraform on every apply. Do not edit by hand.
 [bank]
 34.201.103.207
 
@@ -245,6 +338,16 @@ Change nothing else.
 ansible_user=ubuntu
 ansible_ssh_private_key_file=./buildrbank-key.pem
 ```
+
+That is the handover between the two tools, and it is worth a second of your
+attention: **Terraform's output is Ansible's input**, and no human retyped it.
+
+The file is in `.gitignore`, for two reasons. It is rebuilt by every `apply`, so
+committing it would mean a pointless commit every time you rebuild. And a
+cloned repo carrying someone else's dead address is exactly how you end up
+deploying to a server that no longer exists.
+
+✓ `cat inventory.ini` shows the same number as `terraform output -raw ip`.
 
 ### 10 · Make the server ready
 
@@ -390,10 +493,49 @@ step curls `/health` and refuses to go green until the app answers.
 That page is being served by a container, on a server, that you have never
 logged into.
 
+> **No run at all?** Actions are not enabled on your fork — step 1.
+>
+> **Run green, but Build and push says `skipped` in 0s?** `DOCKERHUB_USER` is
+> not set — step 13. It is a *variable*, not a secret, on the tab next door. A
+> green run is not the same as a deployed run.
+>
 > **First run red?** Open it and read the log. Two likely causes: `invalid
 > format` at the SSH step means `EC2_SSH_KEY` is wrong — set it from the file
 > as in step 12. `pull access denied` means `DOCKERHUB_USER` does not match
 > your account.
+
+### When the page loads but the agent will not answer
+
+You send a message and get back:
+
+```
+The agent could not finish that turn:
+ConnectError: [Errno -2] Name or service not known
+```
+
+The app is fine. Something in your `.env` points at a hostname that does not
+exist — nine times out of ten a Supabase project that is paused or deleted.
+Wake it as in step 3, then put the corrected file on the server:
+
+```bash
+cd infra
+ansible-playbook playbook.yml
+```
+
+That copies the new `.env` across and should say `changed=1`. Then **deploy
+again** — push an empty commit, or re-run the last job:
+
+```bash
+cd ..
+git commit --allow-empty -m "pick up the new .env" && git push
+```
+
+> **Do not reach for `docker restart`.** `--env-file` is read once, when the
+> container is *created*, and the values are baked into it. Restarting reuses
+> them, so an edited `.env` changes nothing and you will think the fix failed.
+> The container has to be **recreated** — which is exactly what the deploy job
+> does: `docker rm -f bank` and then `docker run … --env-file ~/.env`. That is
+> why the fix is "push again", not "restart it".
 
 ---
 
@@ -474,6 +616,15 @@ ansible-playbook playbook.yml
 cd .. && gh secret set EC2_HOST --body "$(cd infra && terraform output -raw ip)"
 git commit --allow-empty -m "rebuild" && git push
 ```
+
+No `gh`? The only line that needs it is the third. Run
+`cd infra && terraform output -raw ip`, then paste that number into
+**Settings → Secrets and variables → Actions → `EC2_HOST` → Update**, and push.
+
+> **The address changes every time.** `EC2_HOST` is the one thing that does not
+> update itself — Terraform rewrites `inventory.ini`, but GitHub only knows what
+> you last told it. Forget this and the pipeline deploys to a server that is no
+> longer there.
 
 About four minutes, and the app is live again at a new address.
 
